@@ -1,4 +1,3 @@
-
 /*
   Modbus RS485 Soil Moisture Sensor with temp
    - read all the holding and register values for ID 1,11-16
@@ -15,13 +14,16 @@
 // ArduinoModbus depends on the ArduinoRS485 library
 
 //******************************************************
-//******         VERSION 2.4   ************************
+//******         VERSION 2.5   ************************
 //  2.3 
 //      added 1-6 sensors to the break readings
 //  2.4 
 //      changed time to easier ntp server
+//  2.5 
+//      fixed time for carriots
+//      adjusted the sensor output
 //******************************************************
-String softwareFirmware = "2.4";
+String softwareFirmware = "2.5";
 
 // Rachaels soilmoisture sensor
 
@@ -50,9 +52,8 @@ byte packetBuffer[48]; //buffer to hold incoming and outgoing packets
 char params[32];
 char serverName[] = "api.carriots.com";
 /////// Wifi Settings ///////
-
-char ssid[] = "add SSID HERE";
-char pass[] = "add password for SSID here";
+char ssid[] = "enter WIFI SSID here";
+char pass[] = "enter WIFI password here";
 //WiFiSSLClient client;
 float pingAverage = 0;
 int ping1 = 0;
@@ -96,8 +97,9 @@ const int lightLED = 5; //pin names
 String hostName = "www.google.com";
 
 //shrekware carriot api key
-const String APIKEY = "enter your api key here"; // Replace with your Carriots apikey
-const String DEVICE = "enter your device ID here"; // Replace with the id_developer of your device
+const String APIKEY = "enter your Carriots API key here"; // Replace with your Carriots apikey
+const String DEVICE = "enter you Device ID here"; // Replace with the id_developer of your device
+
 String wifiFirmware = "*.*";
 long rssi = 0;
 const long coolDownTime = 400000;
@@ -156,7 +158,8 @@ void setup()
       // start time server
       timeClient.begin();
       // set offset for not daylight savings
-      timeClient.setTimeOffset(-14400);
+      // cannt set offset here, it interferes with the epoch time sent to carriots
+     // timeClient.setTimeOffset(-14400);
       
       printCurrentNet();
       printWiFiData();
@@ -222,6 +225,7 @@ void loop()
         Serial.println("Waiting for 10 seconds");
         delay(10000);
         ping3 = pingResult;
+        //4th ping = ping result
         pingG();
 
         pingAverage = (ping1+ping2+ping3+pingResult)/4;
@@ -229,7 +233,9 @@ void loop()
         Serial.println(pingAverage);
               
         sendStream();
+        
         sendStatusStream();
+        
         Serial.println("Waiting for 6 minutes");
  ////////////////////////////////////////////////////////////////
  ///////////////////6 minutes delay//////////////////////////////
@@ -354,46 +360,7 @@ void readHoldingRegisterValues4()
         Serial.println();
     }
 }
-// READ Moisture for ID 1
-void readInputRegisterValues() {
-  Serial.println("Reading ID 1, Register 0, MOISTURE value ... ");
-  delay(300);
-  // read 1 input value from (slave) ID 1 and register 0
-  if (!ModbusRTUClient.requestFrom(1, INPUT_REGISTERS, 0x00,1)) {
-    Serial.print("failed to connect ");
-    Serial.println(ModbusRTUClient.lastError());
-  } else {
-    Serial.println("moisture for ID 1 is ");
 
-    while (ModbusRTUClient.available()) {
-      Serial.print(ModbusRTUClient.read());
-      Serial.print(' ');
-    }
-    Serial.println();
-  }
-}
-// READ Temp for ID 1
-void readInputRegisterValues2() 
-{
-  Serial.println("Reading ID 1, Register 1, TEMP value ... ");
-  // read 1 input value from (slave) ID 1, input register, register 1 and 1 value
-  if (!ModbusRTUClient.requestFrom(1, INPUT_REGISTERS, 0x01,1)) 
-  {
-      Serial.print("failed to connect ");
-      Serial.println(ModbusRTUClient.lastError());
-  } 
-  else 
-     {
-        Serial.println("temp for ID 1 is ");
-        while (ModbusRTUClient.available()) 
-
-        {
-            Serial.print(ModbusRTUClient.read());
-            Serial.print(' ');
-        }
-        Serial.println();
-     }
-}
 // READ Moisture for ID (x)
 void readInputRegisterValues(int x) 
 {
@@ -409,13 +376,11 @@ void readInputRegisterValues(int x)
   } 
   else 
      {
-        Serial.println("moisture for ID x is ");
+        Serial.print("moisture for ID x is ");
     
         while (ModbusRTUClient.available()) 
         {
-  
-           soilMoisture = ModbusRTUClient.read();
-            Serial.println();
+            soilMoisture = ModbusRTUClient.read();
             Serial.print(soilMoisture);
         }
         Serial.println();
@@ -462,51 +427,33 @@ void readInputRegisterValuesT(int x)
         Serial.println("temp for ID 11 is ");
         while (ModbusRTUClient.available()) 
         {
-
           soilTempC= ModbusRTUClient.read();
-           Serial.print(soilTempC);
-        //   Serial.print(ModbusRTUClient.read());
-        //   Serial.print(' ');
+          Serial.print(soilTempC);
         }
         Serial.println();
-
-  // soilTemp20F = (soilTemp20C* 9 +2)/5+32;
+        
                switch (x) 
                {
-                  case 1:
-                  soilTemp12C= soilTempC;
-                  soilTemp12C/=10;
-                  soilTemp12F = (soilTemp12C* 9 +2)/5+32;
-                  break;
+                case 1:       
+                   soilTemp12F = setDegrees(soilTempC);
+                   break;
                 case 11:
-                  soilTemp11C= soilTempC;
-                  soilTemp11C/=10;
-                  soilTemp11F = (soilTemp11C* 9 +2)/5+32;
+                  soilTemp11F = setDegrees(soilTempC);
                   break;
                 case 12:
-                  soilTemp12C= soilTempC;
-                  soilTemp12C/=10;
-                  soilTemp12F = (soilTemp12C* 9 +2)/5+32;
+                  soilTemp12F = setDegrees(soilTempC);
                   break;
                 case 13:
-                   soilTemp13C= soilTempC;
-                   soilTemp13C/=10;
-                   soilTemp13F = (soilTemp13C* 9 +2)/5+32;
+                   soilTemp13F = setDegrees(soilTempC);
                    break;
                 case 14:
-                   soilTemp14C= soilTempC;
-                   soilTemp14C/=10;
-                   soilTemp14F = (soilTemp14C* 9 +2)/5+32;
+                   soilTemp14F = setDegrees(soilTempC);
                    break;
                 case 15:
-                   soilTemp15C= soilTempC;
-                   soilTemp15C/=10;
-                   soilTemp15F = (soilTemp15C* 9 +2)/5+32;
+                   soilTemp15F = setDegrees(soilTempC);
                    break;
                 case 16:
-                   soilTemp16C= soilTempC;
-                   soilTemp16C/=10;
-                   soilTemp16F = (soilTemp16C* 9 +2)/5+32;
+                   soilTemp16F = setDegrees(soilTempC);
                    break; 
                 default:
                   Serial.print("default switch statement for moisture reached");
@@ -515,6 +462,11 @@ void readInputRegisterValuesT(int x)
             
      }
  
+}
+int16_t setDegrees(int16_t Celcius)
+{
+   Celcius/=10;
+   return (Celcius* 9 +2)/5+32;
 }
 void printCurrentNet() 
 {
@@ -610,9 +562,9 @@ void pingG()
 void sendStream() 
 {        //get time
       // sendNTPpacket(timeServer); // send an NTP packet to a time server
-          epoch =  timeClient.getEpochTime();
+       epoch =  timeClient.getEpochTime();
              Serial.print("epoch time = ");
-                Serial.println(epoch);
+            Serial.println(epoch);
        
         if (wifiClient.connect("api.carriots.com",80)) 
         {   // If there's a successful connection
@@ -622,7 +574,7 @@ void sendStream()
              rssi = WiFi.RSSI();
              rssi = 100-(-1*rssi);
            
-             String json = "{\"protocol\":\"v2\",\"device\":\""+DEVICE+"\",\"at\":"+epoch+",\"data\":{\"WIFI_RSSI\":\""+rssi+"\",\"Average_ping_time_to_Google\":\""+pingAverage+"\",\"JewelSoilMoisture\":\""+soilMoisture+"\",\"SeaScapeSoilMoisture\":\""+soilMoisture11+"\",\"EarliglowSoilMoisture\":\""+soilMoisture12+"\",\"Controller_Humidity\":\""+val+"\",\"JewelSoilTemp\":\""+soilTemp11C+"\",\"SeaScapeSoilTemp\":\""+soilTemp11F+"\",\"EarliglowSoilTemp\":\""+soilTemp12F+"\",\"Controller_Temp\":\""+temp_F+"\"}}";
+             String json = "{\"protocol\":\"v2\",\"device\":\""+DEVICE+"\",\"at\":"+epoch+",\"data\":{\"WIFI_RSSI\":\""+rssi+"\",\"Average_ping_time_to_Google\":\""+pingAverage+"\",\"JewelSoilMoisture\":\""+soilMoisture11+"\",\"SeaScapeSoilMoisture\":\""+soilMoisture12+"\",\"EarliglowSoilMoisture\":\""+soilMoisture13+"\",\"Controller_Humidity\":\""+val+"\",\"JewelSoilTemp\":\""+soilTemp11F+"\",\"SeaScapeSoilTemp\":\""+soilTemp12F+"\",\"EarliglowSoilTemp\":\""+soilTemp13F+"\",\"Controller_Temp\":\""+temp_F+"\"}}";
             
               Serial.println(json);
            // Make a HTTP request
@@ -668,8 +620,9 @@ void sendStream()
 void sendStatusStream() 
 {        
       //get time
-      timeClient.update();
+    //  timeClient.update();
        epoch = timeClient.getEpochTime();
+      
              Serial.print("epoch time = ");
                 Serial.println(epoch);  
                               
