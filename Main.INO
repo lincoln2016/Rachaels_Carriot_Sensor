@@ -1,3 +1,4 @@
+
 /*
   Modbus RS485 Soil Moisture Sensor with temp
    - read all the holding and register values for ID 1,11-16
@@ -6,6 +7,7 @@
   Circuit:
    - MKR 1000 board
    - MKR 485 shield
+         pins A5(RE)and A6(DE), 13 and 14 and voltage
    - Modbus RS485 soil moisture sensor
         by Catnip electronics
         https://www.tindie.com/products/miceuz/modbus-rs485-soil-moisture-sensor-2/ 
@@ -14,7 +16,7 @@
 // ArduinoModbus depends on the ArduinoRS485 library
 
 //******************************************************
-//******         VERSION 2.5   ************************
+//******         VERSION 2.6   ************************
 //  2.3 
 //      added 1-6 sensors to the break readings
 //  2.4 
@@ -22,8 +24,11 @@
 //  2.5 
 //      fixed time for carriots
 //      adjusted the sensor output
+//   2.6
+//     added relays for low moisture level
+//
 //******************************************************
-String softwareFirmware = "2.5";
+String softwareFirmware = "2.6";
 
 // Rachaels soilmoisture sensor
 
@@ -52,8 +57,9 @@ byte packetBuffer[48]; //buffer to hold incoming and outgoing packets
 char params[32];
 char serverName[] = "api.carriots.com";
 /////// Wifi Settings ///////
-char ssid[] = "enter WIFI SSID here";
-char pass[] = "enter WIFI password here";
+//  REPLACE WITH YOUR OWN WIFI SETTINGS
+char ssid[] = "your SSID goes here";
+char pass[] = "your wifi password here";
 //WiFiSSLClient client;
 float pingAverage = 0;
 int ping1 = 0;
@@ -63,6 +69,8 @@ int pingResult;
 int totalCount = 0; 
 int status = WL_IDLE_STATUS; 
 // temp and humidity variables
+// the level at which it will water
+const int moistureThreshold = 350;
 uint16_t soilMoisture = 0;
 uint16_t soilMoisture11 = 0;
 uint16_t soilMoisture12 = 0;
@@ -71,18 +79,11 @@ uint16_t soilMoisture14 = 0;
 uint16_t soilMoisture15 = 0;
 uint16_t soilMoisture16 = 0;
 int16_t soilTempC = 0;
-int16_t soilTempF = 0;
-int16_t soilTemp11C = 0;
 int16_t soilTemp11F = 0;
-int16_t soilTemp12C = 0;
 int16_t soilTemp12F= 0;
-int16_t soilTemp13C = 0;
 int16_t soilTemp13F= 0;
-int16_t soilTemp14C = 0;
 int16_t soilTemp14F = 0;
-int16_t soilTemp15C = 0;
 int16_t soilTemp15F= 0;
-int16_t soilTemp16C = 0;
 int16_t soilTemp16F= 0;
 
 //controller temp
@@ -92,13 +93,18 @@ int val = 0;
 float temp = 0;
 // change to your server's port
 int serverPort = 80;
-const int lightRelay = 6; //pin names
-const int lightLED = 5; //pin names
+//pin names
+const int relay_1 = 0; 
+const int relay_2 = 3;
+const int relay_3 = 4;
+const int relay_4 = 5;
+const int relay_5 = 6;
+const int relay_6 = 7;
 String hostName = "www.google.com";
 
-//shrekware carriot api key
-const String APIKEY = "enter your Carriots API key here"; // Replace with your Carriots apikey
-const String DEVICE = "enter you Device ID here"; // Replace with the id_developer of your device
+//ADD YOUR carriot api key BELOW
+const String APIKEY = "your Carriots API Key here"; // Replace with your Carriots apikey
+const String DEVICE = "your device ID here"; // Replace with the id_developer of your device
 
 String wifiFirmware = "*.*";
 long rssi = 0;
@@ -135,9 +141,12 @@ void setup()
    // rtc.begin(); // initialize RTC
     Serial.begin(9600);  
     dht.begin();
-    pinMode(lightLED, OUTPUT);
-    pinMode(lightRelay, OUTPUT);
-
+ 
+    pinMode(relay_1, OUTPUT);
+    pinMode(relay_2, OUTPUT);
+    digitalWrite(relay_1, HIGH);
+   
+    
   Serial.println("Starting Modbus Client Moisture Sensor");
   // start the Modbus client, DEFAULT the moisture sensor runs at 19200 with a 500ms innterval
   if (!ModbusRTUClient.begin(19200)) 
@@ -242,12 +251,112 @@ void loop()
  ////////////////////////////////////////////////////////////////
         for(int t=359;t>0;t--)
         {
+          checkMoisture();
+           checkTempStatus();
           Serial.print(t);
           Serial.print(", ");
             delay(10000);  
      
 }
 }
+
+void checkMoisture()
+{
+  
+  //read Moisture value of sensor 11
+  for(int x = 11;x<17;x++)
+  {
+      readInputRegisterValues(x);
+    
+          switch (x) 
+              {
+                case 11:
+                   if(soilMoisture11<moistureThreshold)
+                   {
+                     digitalWrite(relay_1, LOW);   
+                     Serial.println("less than 350 ");     
+                   }
+                   else 
+                   {
+                    digitalWrite(relay_1, HIGH);   
+                    Serial.println("else more than 350 ");  
+                   }
+                  break;
+                case 12:
+                  if(soilMoisture12<moistureThreshold)
+                   {
+                     digitalWrite(relay_2, LOW);   
+                     Serial.println("less than 350 ");     
+                   }
+                   else 
+                   {
+                    digitalWrite(relay_2, HIGH);   
+                    Serial.println("else more than 350 ");  
+                   }
+                  break;
+                case 13:
+                    if(soilMoisture13<moistureThreshold)
+                   {
+                     digitalWrite(relay_3, LOW);   
+                     Serial.println("less than 350 ");     
+                   }
+                   else 
+                   {
+                    digitalWrite(relay_3, HIGH);   
+                    Serial.println("else more than 350 ");  
+                   }
+                   break;
+                case 14:
+                       if(soilMoisture14<moistureThreshold)
+                   {
+                     digitalWrite(relay_4, LOW);   
+                     Serial.println("less than 350 ");     
+                   }
+                   else 
+                   {
+                    digitalWrite(relay_4, HIGH);   
+                    Serial.println("else more than 350 ");  
+                   }
+                   break;
+                case 15:
+                           if(soilMoisture15<moistureThreshold)
+                   {
+                     digitalWrite(relay_5, LOW);   
+                     Serial.println("less than 350 ");     
+                   }
+                   else 
+                   {
+                    digitalWrite(relay_5, HIGH);   
+                    Serial.println("else more than 350 ");  
+                   }
+           
+                   break;
+                case 16:
+                             if(soilMoisture16<moistureThreshold)
+                   {
+                     digitalWrite(relay_6, LOW);   
+                     Serial.println("less than 350 ");     
+                   }
+                   else 
+                   {
+                    digitalWrite(relay_6, HIGH);   
+                    Serial.println("else more than 350 ");  
+                   }
+                   break; 
+                default:
+                  Serial.print("default switch statement for moisture reached");
+                  break;   
+                delay(500);  
+            }    
+  }
+ 
+}
+boolean checkTempStatus(){
+    
+  return true;
+  }
+
+
     // call to change the ID of Sensor
 void writeHoldingRegisterValues() 
 {
@@ -385,7 +494,7 @@ void readInputRegisterValues(int x)
         }
         Serial.println();
         switch (x) {
-           case 1:
+          case 1:
             soilMoisture12 = soilMoisture;
             break;
           case 11:
@@ -395,17 +504,17 @@ void readInputRegisterValues(int x)
             soilMoisture12= soilMoisture;
             break;
           case 13:
-             soilMoisture13= soilMoisture;
-             break;
+            soilMoisture13= soilMoisture;
+            break;
           case 14:
-             soilMoisture14= soilMoisture;
-             break;
+            soilMoisture14= soilMoisture;
+            break;
           case 15:
-             soilMoisture15= soilMoisture;
-             break;
+            soilMoisture15= soilMoisture;
+            break;
           case 16:
-             soilMoisture16= soilMoisture;
-             break; 
+            soilMoisture16= soilMoisture;
+            break; 
           default:
             Serial.print("default switch statement for moisture reached");
             break;
