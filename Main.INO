@@ -26,9 +26,15 @@
 //      adjusted the sensor output
 //   2.6
 //     added relays for low moisture level
-//
+//   2.7a
+//     changed delays to timer function to speed up operation
+//     not all delays were removed
+//      a) fixed timing issues - cleaned up some code
+//   2.8
+//      moved WIFI SSID/Password to the arduino secrets.h file
+//      moved Carriots Device ID and API Key to the secrets.h file 
 //******************************************************
-String softwareFirmware = "2.6";
+String softwareFirmware = "2.8";
 
 // Rachaels soilmoisture sensor
 
@@ -44,7 +50,7 @@ String softwareFirmware = "2.6";
 #include <DHT_U.h>
 #include <ArduinoRS485.h> 
 #include <ArduinoModbus.h>
-
+#include "arduino_secrets.h" 
 ///////////////////////
 // Variables///////////
 ///////////////////////
@@ -57,9 +63,9 @@ byte packetBuffer[48]; //buffer to hold incoming and outgoing packets
 char params[32];
 char serverName[] = "api.carriots.com";
 /////// Wifi Settings ///////
-//  REPLACE WITH YOUR OWN WIFI SETTINGS
-char ssid[] = "your SSID goes here";
-char pass[] = "your wifi password here";
+///////please enter your sensitive data in the Secret tab/arduino_secrets.h
+char ssid[] = SECRET_SSID;        // your network SSID (wifi name)
+char pass[] = SECRET_PASS;    // your network password (wifi password)
 //WiFiSSLClient client;
 float pingAverage = 0;
 int ping1 = 0;
@@ -101,23 +107,28 @@ const int relay_4 = 5;
 const int relay_5 = 6;
 const int relay_6 = 7;
 String hostName = "www.google.com";
-
-//ADD YOUR carriot api key BELOW
-const String APIKEY = "your Carriots API Key here"; // Replace with your Carriots apikey
-const String DEVICE = "your device ID here"; // Replace with the id_developer of your device
-
+// counter for one hour loop
+int loopTimer = 0;
+//************shrekware carriot api key
+///////please enter your sensitive data in the Secret tab/arduino_secrets.h
+const String APIKEY = CARRIOTSAPIKEY; // Replace with your Carriots apikey
+const String DEVICE = CARRIOTSDEVICE; // Replace with the id_developer of your device
 String wifiFirmware = "*.*";
 long rssi = 0;
-const long coolDownTime = 400000;
-const long wateringTime = 200000;
 unsigned long epoch =0;
 unsigned long millisSinceWatering = 0; 
 unsigned long currentMillis = 0;
 unsigned long thisMillis = 0;
 unsigned long lastMillis = 0;
-
-//time stuff
-//time stuff
+// used instead of the delay
+const long oneHourInterval = 3599000;
+unsigned long previousMillis = 0; 
+unsigned long previousMillisGoogle = 0; 
+unsigned long tenMinutePreviousMillis = 0; 
+//one hour is 3600000 millis
+const long pingGoogleTime = 3599000;
+const long tenMinutes = 600000;
+boolean startUP = false;
 //time stuff
 /////// time stuff //////////////////////////////////////////////////////////////
 // time.nist.gov NTP server
@@ -174,51 +185,139 @@ void setup()
       printWiFiData();
       wifiFirmware = WiFi.firmwareVersion();
       Serial.println();
+     currentMillis = millis();
  
 }
 // Main Program Loop
 void loop() 
 {
-  // get time
-  timeClient.update();
-  //read ID of sensor 1
-  readHoldingRegisterValues();
-  delay(500);
-  //read Baud Rate of sensor 1
-  readHoldingRegisterValues2();
-  delay(500);
-  //read Parity of sensor 1
-  readHoldingRegisterValues3();
-  delay(500);
-  //read Interval of sensor 1
-  readHoldingRegisterValues4();
-  delay(500);
-  //read Moisture value of sensor 11
-  readInputRegisterValues(11);
-  delay(500);
-  //read temperature of sensor 11
-  readInputRegisterValuesT(11);
-  delay(500);
-  //read Moisture value of sensor 1
-  readInputRegisterValuesT(1);
-  delay(500);
-  //read temperature of sensor 1
-  readInputRegisterValues(1);
-  delay(500);
-  // get controller temp and humidity
-  Serial.println();
+     // get time
+     timeClient.update();
+  
+     readDHT22();
 
-    for (x=1;x<2; x++) { 
+ 
+       
+        readSensors();
 
-    temp = dht.readTemperature();
-    val = (int)dht.readHumidity();  
-    temp_F = (temp* 9 +2)/5+32;  
-    
-    delay(50);
+        checkMoisture();
+           
+        checkTempStatus();
+        //records average ping to google over 4 pings
+        pingGoogle();
+       // runs once on start up
+          if(!startUP){
+                 sendStatusStream();
+                 sendStream();
+                 startUP=true;
+            }
+  
+        
+        // sends status every ten minutes
+        tenMinuteCheck();
+        
+        Serial.println("Waiting for 60 minutes");
+        oneHourCheck();
+} 
 
-   //end of for loop
+  void readDHT22()
+  {
+    for (x=1;x<10; x++) 
+    { 
+      temp = dht.readTemperature();
+      val = (int)dht.readHumidity();  
+      delay(50);
     }
-        Serial.println("ping average");
+    //DHT22 sensor
+     temp_F = (temp* 9 +2)/5+32;  
+ }
+   void readSensors()
+   {
+      //read ID of sensor 1
+      readHoldingRegisterValues();
+      delay(500);
+      //read Baud Rate of sensor 1
+      readHoldingRegisterValues2();
+      delay(500);
+      //read Parity of sensor 1
+      readHoldingRegisterValues3();
+      delay(500);
+      //read Interval of sensor 1
+      readHoldingRegisterValues4();
+      delay(500);
+      //read Moisture value of sensor 11
+      readInputRegisterValues(11);
+      delay(500);
+      //read temperature of sensor 11
+      readInputRegisterValuesT(11);
+      delay(500);
+      //read Moisture value of sensor 1
+      readInputRegisterValuesT(1);
+      delay(500);
+      //read temperature of sensor 1
+      readInputRegisterValues(1);
+      delay(500);
+    }
+    
+void tenMinuteCheck()
+{
+ 
+  
+      Serial.print("tenMinuteCheck- this is currentMillis: ");
+      Serial.print(currentMillis); 
+      if(currentMillis - tenMinutePreviousMillis >= tenMinutes)
+      {
+        tenMinutePreviousMillis=currentMillis; 
+        sendStatusStream();
+      }
+  
+}
+
+void oneHourCheck()
+
+  {
+      //this is only to print the number of times it loops, no real reason
+      loopTimer++;
+      Serial.print("this is the loop timer count: ");
+      Serial.print(loopTimer);    
+      Serial.print(", ");
+      currentMillis = millis();
+      Serial.print("this is currentMillis: ");
+      Serial.print(currentMillis); 
+    if(currentMillis - previousMillis >= oneHourInterval)
+    {
+         Serial.print("this is currentMillis: ");
+         Serial.print(currentMillis); 
+         Serial.print("this is previousMillis: ");
+         Serial.print(previousMillis);      
+         previousMillis = currentMillis;
+         // sends data stream t0 carriots  
+         sendStream(); 
+      }
+  }
+
+void pingGoogle()
+  {
+     if(previousMillisGoogle>0)
+     {
+        currentMillis = millis();
+      
+        if (currentMillis - previousMillisGoogle >= pingGoogleTime) 
+        {
+          previousMillisGoogle = currentMillis;
+          pingTimedGoogle();
+        }
+    }
+     else
+     {
+          pingTimedGoogle();
+          previousMillisGoogle = currentMillis;
+     }
+  
+  }
+  void pingTimedGoogle(){
+    
+                 Serial.println("ping average");
 
         pingG();
         ping1 = pingResult; 
@@ -240,25 +339,10 @@ void loop()
         pingAverage = (ping1+ping2+ping3+pingResult)/4;
         Serial.print("Average ping time to Google: ");
         Serial.println(pingAverage);
-              
-        sendStream();
-        
-        sendStatusStream();
-        
-        Serial.println("Waiting for 60 minutes");
- ////////////////////////////////////////////////////////////////
- ///////////////////60 minutes delay//////////////////////////////
- ////////////////////////////////////////////////////////////////
-        for(int t=359;t>0;t--)
-        {
-          checkMoisture();
-           checkTempStatus();
-          Serial.print(t);
-          Serial.print(", ");
-            delay(10000);  
-     
-}
-}
+      
+    
+    
+    }
 
 void checkMoisture()
 {
