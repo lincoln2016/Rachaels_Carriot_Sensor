@@ -16,7 +16,7 @@
 // ArduinoModbus depends on the ArduinoRS485 library
 
 //******************************************************
-//******         VERSION 2.6   ************************
+//******         VERSION 2.8   ************************
 //  2.3 
 //      added 1-6 sensors to the break readings
 //  2.4 
