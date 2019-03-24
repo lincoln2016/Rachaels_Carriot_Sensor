@@ -1,4 +1,6 @@
 
+
+
 /*
   Modbus RS485 Soil Moisture Sensor with temp
    - read all the holding and register values for ID 1,11-16
@@ -16,36 +18,47 @@
 // ArduinoModbus depends on the ArduinoRS485 library
 
 //******************************************************
-//******         VERSION 3.1  ************************
-//  2.3 
+//******         VERSION 4.1  ************************
+//    2.3 
 //      added 1-6 sensors to the break readings
-//  2.4 
+//    2.4 
 //      changed time to easier ntp server
-//  2.5 
+//    2.5 
 //      fixed time for carriots
 //      adjusted the sensor output
-//   2.6
+//    2.6
 //     added relays for low moisture level
-//   2.7a
+//    2.7a
 //     changed delays to timer function to speed up operation
 //     not all delays were removed
 //      a) fixed timing issues - cleaned up some code
-//   2.8
+//    2.8
 //      moved WIFI SSID/Password to the arduino secrets.h file
 //      moved Carriots Device ID and API Key to the secrets.h file 
 //       b) added sensor 12-16, amd fixed serial output messages to reflect the true sensor ID
 //          changed output to carriots for Data Stream to send sensors 11-16 
 //    3.0 added WebServer for access to pump Control
 //        added moisture and temperature for 6 sensors
-//    3.1 added MDNS name http://ceres.local/ to connect to web server
+//    3.1 
+//          added MDNS name http://ceres.local/ to connect to web server
+//    3.1a  
+//         added moisture is greater than 0 meaning if sensors are offline, dont turn pump onn
+//    4.0 
+//          added lcd display  Sparkfun I2C 
+//          SparkFun 16x2 SerLCD - RGB on Black 3.3V
+//          https://www.sparkfun.com/products/14073
+//    4.1  added watchdogtimer for auto reboot on code hang
 //******************************************************
-String softwareFirmware = "3.1";
+String softwareFirmware = "4.1";
 
 // Rachaels soilmoisture sensor
+
+
+#include <Adafruit_SleepyDog.h>
 #include <WiFiMDNSResponder.h>
 #include <NTPClient.h>
-#include <SPI.h>
-#include <Adafruit_Sensor.h>
+//#include <SPI.h>
+//#include <Adafruit_Sensor.h>
 #include <WiFi101.h>
 #include <Wire.h>
 #include <ArduinoHttpClient.h>
@@ -55,6 +68,11 @@ String softwareFirmware = "3.1";
 #include <ArduinoRS485.h> 
 #include <ArduinoModbus.h>
 #include "arduino_secrets.h" 
+// Sparkpost library for the lcd display
+//https://github.com/sparkfun/SparkFun_SerLCD_Arduino_Library
+#include <SerLCD.h>
+// Initialize the library with default I2C address 0x72
+SerLCD lcd; 
 ///////////////////////
 // Variables///////////
 ///////////////////////
@@ -117,6 +135,7 @@ const int relay_6 = 7;
 String hostName = "www.google.com";
 // counter for one hour loop
 int loopTimer = 0;
+int loopsensor = 11;
 //************shrekware carriot api key
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
 const String APIKEY = CARRIOTSAPIKEY; // Replace with your Carriots apikey
@@ -142,7 +161,7 @@ boolean startUP = false;
 const int pumpOnTime = 5000;
 int webServerTimer = 0;
 
-//time stuff
+//    time stuff
 /////// time stuff //////////////////////////////////////////////////////////////
 // time.nist.gov NTP server
 WiFiUDP ntpUDP;
@@ -160,9 +179,32 @@ DHT dht(DHTPIN, DHTTYPE);
 
 void setup() 
 {
-   // rtc.begin(); // initialize RTC
-    Serial.begin(9600);  
-    dht.begin();   
+
+     Wire.begin();
+
+    lcd.begin(Wire); //Set up the LCD for I2C communication
+    lcd.setBacklight(255, 255, 255); //Set backlight to bright white
+    lcd.setContrast(4); //Set contrast. Lower to 0 for higher contrast.
+    lcd.clear(); //Clear the display - this moves the cursor to home position as well
+    lcd.print("The Ceres Helper");
+    lcd.setCursor(0, 1);
+    lcd.print("starting ...");
+    
+    // First a normal example of using the watchdog timer.
+  // Enable the watchdog by calling Watchdog.enable() as below.
+  // This will turn on the watchdog timer with a ~4 second timeout
+  // before reseting the Arduino. The estimated actual milliseconds
+  // before reset (in milliseconds) is returned.
+  // Make sure to reset the watchdog before the countdown expires or
+  // the Arduino will reset!
+  int countdownMS = Watchdog.enable(4000);
+    
+  Serial.print("Enabled the watchdog with max countdown of ");
+  Serial.print(countdownMS, DEC);
+  Serial.println(" milliseconds!");
+  
+    dht.begin();
+    
     pinMode(relay_1, OUTPUT);
     digitalWrite(relay_1, HIGH);
     pinMode(relay_2, OUTPUT);
@@ -175,25 +217,45 @@ void setup()
     digitalWrite(relay_5, HIGH);
     pinMode(relay_6, OUTPUT);
     digitalWrite(relay_6, HIGH);
+
+    
+   Serial.begin(9600);  
+
     
     Serial.println("Starting Modbus Client Moisture Sensor");
     // start the Modbus client, DEFAULT the moisture sensor runs at 19200 with a 500ms innterval
    if (!ModbusRTUClient.begin(19200)) 
    {
+    
+   //   lcd.print("Error, the modbus client did not start"); 
       Serial.println("Error, the modbus client did not start");
+
       while (1);
-   }   
-      while (status != WL_CONNECTED)
+   } 
+     Watchdog.reset();
+   while (status != WL_CONNECTED)
       {
+       
         wifiClient.stop();
+   //     lcd.clear(); 
+  //  lcd.print("Attempting to connect to WPA SSID: "); 
         Serial.print("Attempting to connect to WPA SSID: ");
+  //      lcd.print("Attempting to connect to WPA SSID: "); 
         Serial.println(ssid);
+  ///      lcd.setCursor(0, 1); 
+ //    lcd.print(ssid); 
+       
         // unsuccessful, retry in 10 seconds
         status = WiFi.begin(ssid, pass);
-        delay(10000);
+        delay(3000);
+        Watchdog.reset();
       }
-  
+     Watchdog.reset();
+     lcd.clear(); 
+     lcd.print("You're connected to the network"); 
       Serial.print("You're connected to the network");
+      delay(5000);
+     Watchdog.reset();
       // start time server
       timeClient.begin();
       // set offset for not daylight savings
@@ -202,11 +264,11 @@ void setup()
       
       printCurrentNet();
       printWiFiData();
-       server.begin();
+      server.begin();
       wifiFirmware = WiFi.firmwareVersion();
       Serial.println();
       currentMillis = millis();
-
+   Watchdog.reset();
       
   // Setup the MDNS responder to listen to the configured name.
   // NOTE: You _must_ call this _after_ connecting to the WiFi network and
@@ -219,34 +281,74 @@ void setup()
   Serial.print("Server listening at http://");
   Serial.print(mdnsName);
   Serial.println(".local/");
+   Watchdog.reset();
+ if(loopsensor >16){loopsensor=11;}
+     lcd.clear(); 
+     lcd.print("Server at       " );
+     lcd.print(mdnsName);
+     lcd.print(".local/");
+     delay(5000);
+     Watchdog.reset();
+ 
 }
 // Main Program Loop
 void loop() 
-{
+{   
+      Watchdog.reset();
+  if(!startUP)
+    {
+   Watchdog.reset();
+     lcd.clear(); 
+     lcd.print("The Ceres Helper" );
+     lcd.print("reading sensors");
+             readSensors();
+               Watchdog.reset();
+           sendStatusStream();
+           sendStream();
+           startUP=true;
+
+
+           
+     } 
+       Watchdog.reset(); 
+  if(loopsensor >16){loopsensor=11;}
+     lcd.clear(); 
+     lcd.print("SoilMoisture " );
+
+     lcd.print(loopsensor);
+       lcd.print("  " );
+     lcd.print(soilMoisture);
+
+
+
+  // Print the number of seconds since reset:
+  lcd.print(millis() / 1000);
+//  sendLcd("this is the send to LCD void");
   // Call the update() function on the MDNS responder every loop iteration to
   // make sure it can detect and respond to name requests.
   mdnsResponder.poll();
 // get time
 timeClient.update();
+  // runs once on start up
+
 
 readDHT22();
    // check whether the reading should trip the relay
-checkMoisture();
+checkMoisture(loopsensor);
+Watchdog.reset();
+loopsensor++;
    // currently empty function, returns true   
 checkTempStatus();
    //records average ping to google over 4 pings
 pingGoogle();
-  // runs once on start up
-    if(!startUP)
-    {
-           readSensors();
-           sendStatusStream();
-           sendStream();
-           startUP=true;
-     }   
+Watchdog.reset();
   // sends status every ten minutes
+  Serial.println("10 Minute Check");
 tenMinuteCheck();
-  Serial.println("Waiting for 60 minutes");
+Watchdog.reset();
+  // sends data every hour
+  Serial.println("60 Minute Check");
+Watchdog.reset();
 oneHourCheck();
 
  WiFiClient wifiClient = server.available();   // listen for incoming clients
@@ -365,41 +467,41 @@ oneHourCheck();
         }
         // Check to see if the wifiClient request was "GET /H" or "GET /L":
            if (currentLine.endsWith("GET /1")) {
-          digitalWrite(0, LOW);               // GET /1 turns Pump 1 on
+          digitalWrite(relay_1, LOW);               // GET /1 turns Pump 1 on
            Serial.println("Pin 1 Low");
            delay(pumpOnTime);
-         digitalWrite(1, HIGH);   
+         digitalWrite(relay_1, HIGH);   
         }
         if (currentLine.endsWith("GET /2")) {
-          digitalWrite(1, LOW);                // GET /2 turns Pump 2 on
-           Serial.println("Pin 2 LOW");
+          digitalWrite(relay_2, LOW);                // GET /2 turns Pump 2 on
+           Serial.println("relay_2  LOW");
            delay(pumpOnTime);
-           digitalWrite(1, HIGH);  
+           digitalWrite(relay_2, HIGH);  
         }
          if (currentLine.endsWith("GET /3")) {
-          digitalWrite(0, LOW);        // GET /3 turns Pump 3 on
-           Serial.println("Pin 3 LOW");
+          digitalWrite(relay_3, LOW);        // GET /3 turns Pump 3 on
+           Serial.println("relay_3 LOW");
            delay(pumpOnTime);
-          digitalWrite(1, HIGH);  
+          digitalWrite(relay_3, HIGH);  
         }
         if (currentLine.endsWith("GET /4")) {
-          digitalWrite(1, LOW);                // GET /4 turns Pump 4 on
-          Serial.println("Pin 4 LOW");
+          digitalWrite(relay_4, LOW);                // GET /4 turns Pump 4 on
+          Serial.println("relay_4 LOW");
           delay(pumpOnTime);
-          digitalWrite(1, HIGH);   
+          digitalWrite(relay_4, HIGH);   
            
         }
               if (currentLine.endsWith("GET /5")) {
-          digitalWrite(1, LOW);               // GET /5 turns Pump 5 on
+          digitalWrite(relay_5, LOW);               // GET /5 turns Pump 5 on
           Serial.println("Pin 5 LOW");
            delay(pumpOnTime);
-          digitalWrite(1, HIGH);   
+          digitalWrite(relay_5, HIGH);   
         }
               if (currentLine.endsWith("GET /6")) {
-          digitalWrite(1, LOW);               // GET /6 turns Pump 6 on
+          digitalWrite(relay_6, LOW);               // GET /6 turns Pump 6 on
           Serial.println("Pin 6 LOW");
            delay(pumpOnTime);
-          digitalWrite(1, HIGH);   
+          digitalWrite(relay_6, HIGH);   
         }
       }
     }
@@ -409,10 +511,21 @@ oneHourCheck();
     Serial.println("wifiClient disonnected");
   }
 
-          
+ //end Void LOOP         
 }
+void sendLcd(String lcdPrint){
+
+       lcd.clear(); //Clear the display - this moves the cursor to home position as well
+     //    lcd.clear(); //Clear the display - this moves the cursor to home position as well
+       lcd.print("The Ceres Helper");
+       lcd.display();
+  
+  }
+
+
   void readDHT22()
   {
+       Watchdog.reset();
     for (x=1;x<10; x++) 
     { 
       temp = dht.readTemperature();
@@ -447,6 +560,7 @@ oneHourCheck();
  //read temperature of sensor 1
      // readInputRegisterValues(1);
       delay(500);
+         Watchdog.reset();
       //read Moisture value of sensor 12
       readInputRegisterValues(12);
       delay(500);
@@ -459,6 +573,7 @@ oneHourCheck();
     delay(500);
       readInputRegisterValues(14);
       delay(500);
+         Watchdog.reset();
       readInputRegisterValuesT(14);
    delay(500);
       readInputRegisterValues(15);
@@ -469,6 +584,7 @@ oneHourCheck();
       delay(500);
       readInputRegisterValuesT(16);
      delay(500);
+     Watchdog.reset();
     }
     
 void tenMinuteCheck()
@@ -558,125 +674,119 @@ void pingGoogle()
     
     }
 
-void checkMoisture()
+void checkMoisture(int x)
 {
   
   //read Moisture value of sensor 11
-  for(int x = 11;x<17;x++)
-  {
+ // for(int x = 11;x<17;x++)
+ // {
       readInputRegisterValues(x);
     
           switch (x) 
               {
                 case 11:
-                   if(soilMoisture11<moistureThreshold)
+                   if(soilMoisture11<moistureThreshold and soilMoisture11>0)
                    {
                       digitalWrite(relay_1, LOW);   
                       Serial.println("less than 350 ");     
                    }
                    else 
                       {
-                        if(relay_1==LOW)
-                        {
-                          if(soilMoisture11>highWaterThreshold)
+                    
+                          if(soilMoisture11>highWaterThreshold )
                           {
                               digitalWrite(relay_1, HIGH);   
                               Serial.println("watered to 450 ");  
                           }
                         }
-                      }
+                   
                   break;
                 case 12:
-                  if(soilMoisture12<moistureThreshold)
+                  if(soilMoisture12<moistureThreshold and soilMoisture12>0)
                   {
                      digitalWrite(relay_2, LOW);   
                      Serial.println("less than 350 ");     
                   }
                   else 
                      {
-                      if(relay_2==LOW)
-                      {
-                        if(soilMoisture12>highWaterThreshold)
+                          if(soilMoisture12>highWaterThreshold)
                         {
                            digitalWrite(relay_2, HIGH);   
                            Serial.println("watered to 450 ");  
                         }
                       }
-                     }
+                     
                   break;
                 case 13:
-                   if(soilMoisture13<moistureThreshold)
+                   if(soilMoisture13<moistureThreshold  and soilMoisture13>0)
                    {
                      digitalWrite(relay_3, LOW);   
                      Serial.println("less than 350 ");     
                    }
                    else 
                       {
-                       if(relay_3==LOW)
-                       {
+                  
                          if(soilMoisture13>highWaterThreshold)
                          {
                            digitalWrite(relay_3, HIGH);   
                            Serial.println("watered to 450 ");  
                           }
                         }  
-                      }
+                    
                    break;
                 case 14:
-                   if(soilMoisture14<moistureThreshold)
+                   if(soilMoisture14<moistureThreshold and soilMoisture14>0)
                    {
                      digitalWrite(relay_4, LOW);   
                      Serial.println("less than 350 ");     
                    }
                    else 
                       {
-                        if(relay_4==LOW)
-                        {
+                   
                          if(soilMoisture14>highWaterThreshold)
                          {
                            digitalWrite(relay_4, HIGH);   
                            Serial.println("watered to 450 ");  
                          }
-                        }
-                      }
+                  
                    break;
                 case 15:
-                           if(soilMoisture15<moistureThreshold)
+                           if(soilMoisture15<moistureThreshold and soilMoisture15>0)
                    {
                      digitalWrite(relay_5, LOW);   
                      Serial.println("less than 350 ");     
                    }
                    else 
                    {
-                      if(relay_5==LOW){
+                  
                       if(soilMoisture15>highWaterThreshold){
                            digitalWrite(relay_5, HIGH);   
                            Serial.println("watered to 450 ");  
                       } 
                    }
-                   }
+                
                    break;
                 case 16:
-                             if(soilMoisture16<moistureThreshold)
+                             if(soilMoisture16<moistureThreshold and soilMoisture16>0)
                    {
                      digitalWrite(relay_6, LOW);   
                      Serial.println("less than 350 ");     
                    }
                    else 
                    {
-                     if(relay_6==LOW){
+                 
                       if(soilMoisture16>highWaterThreshold){
                            digitalWrite(relay_6, HIGH);   
                            Serial.println("watered to 450 ");  
                       } 
-                   }}
+                   }
                    break; 
                 default:
                   Serial.print("default switch statement for moisture reached");
                   break;   
              
             }    
-     delay(500);  
+ 
      }
  
 }
