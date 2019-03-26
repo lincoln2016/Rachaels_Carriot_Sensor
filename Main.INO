@@ -549,26 +549,20 @@ if(wifiUp)
 //****************************************************
   else
   {
-// sets lcd to ORANGE no wifi
-   //orange
-
-    
-   Watchdog.reset();
+    // sets lcd to ORANGE no wifi
+    Watchdog.reset();
     // runs once on start up
     if(!startUP)
     {
-  
       lcd.clear(); 
       lcd.print("The Ceres Helper" );
       lcd.print("reading sensors");
-      
       readSensors();
       Watchdog.reset();
       startUP=true;
      } 
      Watchdog.reset(); 
      if(loopsensor >16){loopsensor=11;}
- //    lcd.setBacklight(0xFF8C00);
      lcd.clear(); 
      lcd.print("Moisture " );
      lcd.print(loopsensor);
@@ -578,13 +572,7 @@ if(wifiUp)
      lcd.print("UpTime:" );
      // Print the number of seconds since reset:
      lcd.print(millis() / 1000);
-     //  sendLcd("this is the send to LCD void");
-     // Call the update() function on the MDNS responder every loop iteration to
-     // make sure it can detect and respond to name requests.
      Watchdog.reset();
-   //  mdnsResponder.poll();
-     // get time
-   //  timeClient.update();
      readDHT22();
      // check whether the reading should trip the relay
      checkMoisture(loopsensor);
@@ -592,25 +580,9 @@ if(wifiUp)
      loopsensor++;
      // currently empty function, returns true   
      checkTempStatus();
-     //records average ping to google over 4 pings
-  //   pingGoogle();
      Watchdog.reset();
-     
-     // sends status every ten minutes
-     Serial.println("10 Minute Check");
-     tenMinuteCheck();
-     
-     // sends data every hour
-     Serial.println("60 Minute Check");
-     Watchdog.reset();
-     oneHourCheck();
-
      pumpCheck();
-      
-    
-    
-    
-    
+   
   }
 
  //end Void LOOP      
