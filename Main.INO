@@ -13,13 +13,15 @@
    - Modbus RS485 soil moisture sensor
         by Catnip electronics
         https://www.tindie.com/products/miceuz/modbus-rs485-soil-moisture-sensor-2/ 
-               
+   -  SparkFun 16x2 SerLCD - RGB on Black 3.3V   
+        https://www.sparkfun.com/products/14073
+        https://github.com/sparkfun/SparkFun_SerLCD_Arduino_Library
+   - 6 position relay board - generic
 */
 // ArduinoModbus depends on the ArduinoRS485 library
 
 //******************************************************
-//******         VERSION 4.1  ************************
-//    2.3 
+//******         VERSION 4.3b
 //      added 1-6 sensors to the break readings
 //    2.4 
 //      changed time to easier ntp server
@@ -48,11 +50,14 @@
 //          SparkFun 16x2 SerLCD - RGB on Black 3.3V
 //          https://www.sparkfun.com/products/14073
 //    4.1  added watchdogtimer for auto reboot on code hang
+//    4.2  added checkPump function, removed delay while pump running
+//    4.3b  
+//        added boolean wifiUp - works with or without wifi
+//        added ORANGE LCD for no wifi
 //******************************************************
-String softwareFirmware = "4.1";
+String softwareFirmware = "4.3b";
 
 // Rachaels soilmoisture sensor
-
 
 #include <Adafruit_SleepyDog.h>
 #include <WiFiMDNSResponder.h>
@@ -76,6 +81,19 @@ SerLCD lcd;
 ///////////////////////
 // Variables///////////
 ///////////////////////
+
+//*****************************************
+//*******Changable Variables***************
+//   generally the pump timer will kick in before the highWaterThreshold
+//   manual pump over ride timer
+     const int pumpTimer = 10000;
+//   the level at which it will water
+     const int moistureThreshold = 325;
+//   the high water threshold
+     const int highWaterThreshold = 400;
+//****************************************
+
+
 char mdnsName[] = "ceres"; // the MDNS name that the board will respond to
 boolean watering = true; 
 // Create a MDNS responder to listen and respond to MDNS name requests.
@@ -89,19 +107,16 @@ char serverName[] = "api.carriots.com";
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
 char ssid[] = SECRET_SSID;        // your network SSID (wifi name)
 char pass[] = SECRET_PASS;    // your network password (wifi password)
-//WiFiSSLClient client;
+// ping google variables
 float pingAverage = 0;
 int ping1 = 0;
 int ping2 = 0;
 int ping3 = 0;
 int pingResult;
 int totalCount = 0; 
+// wifi status
 int status = WL_IDLE_STATUS; 
-// temp and humidity variables
-// the level at which it will water
-const int moistureThreshold = 325;
-// the high water threshold
-const int highWaterThreshold = 400;
+// temp and humidity sensor variables
 uint16_t soilMoisture = 0;
 uint16_t soilMoisture11 = 0;
 uint16_t soilMoisture12 = 0;
@@ -117,13 +132,14 @@ int16_t soilTemp14F = 0;
 int16_t soilTemp15F= 0;
 int16_t soilTemp16F= 0;
 
-//controller temp
+//DHT22 temp/humidity
 float temp_F=0;
 int x=0;
 int val = 0;
 float temp = 0;
 // change to your server's port
 int serverPort = 80;
+// the AP server port number
 WiFiServer server(80);
 //pin names
 const int relay_1 = 0; 
@@ -136,6 +152,14 @@ String hostName = "www.google.com";
 // counter for one hour loop
 int loopTimer = 0;
 int loopsensor = 11;
+
+//pump timer
+int pumpTimer_11=0;
+int pumpTimer_12=0;
+int pumpTimer_13=0;
+int pumpTimer_14=0;
+int pumpTimer_15=0;
+int pumpTimer_16=0;
 //************shrekware carriot api key
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
 const String APIKEY = CARRIOTSAPIKEY; // Replace with your Carriots apikey
@@ -155,18 +179,14 @@ unsigned long tenMinutePreviousMillis = 0;
 //one hour is 3600000 millis
 const long pingGoogleTime = 3599000;
 const long tenMinutes = 600000;
- unsigned long previousMillisLoop = 0;
+unsigned long previousMillisLoop = 0;
 boolean startUP = false;
-// this is the time the pump will run for when manual override is pressed
-const int pumpOnTime = 5000;
-int webServerTimer = 0;
 
 //    time stuff
 /////// time stuff //////////////////////////////////////////////////////////////
 // time.nist.gov NTP server
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
-
 // Defines pin number to which the sensor is connected
 #define DHTPIN A1  
 #define DHTTYPE DHT22   // DHT 22
@@ -174,15 +194,16 @@ NTPClient timeClient(ntpUDP);
 // A UDP instance to let us send and receive packets over UDP
 WiFiUDP Udp;
 //WiFiSSLClient client;
+boolean wifiUp = false;
 WiFiClient wifiClient;
+// temp and humidity sensor
 DHT dht(DHTPIN, DHTTYPE);
 
 void setup() 
 {
-
-     Wire.begin();
-
+    Wire.begin();
     lcd.begin(Wire); //Set up the LCD for I2C communication
+    Wire.setClock(400000); //Optional - set I2C SCL to High Speed Mode of 400kHz
     lcd.setBacklight(255, 255, 255); //Set backlight to bright white
     lcd.setContrast(4); //Set contrast. Lower to 0 for higher contrast.
     lcd.clear(); //Clear the display - this moves the cursor to home position as well
@@ -190,14 +211,14 @@ void setup()
     lcd.setCursor(0, 1);
     lcd.print("starting ...");
     
-    // First a normal example of using the watchdog timer.
+  // First a normal example of using the watchdog timer.
   // Enable the watchdog by calling Watchdog.enable() as below.
   // This will turn on the watchdog timer with a ~4 second timeout
   // before reseting the Arduino. The estimated actual milliseconds
   // before reset (in milliseconds) is returned.
   // Make sure to reset the watchdog before the countdown expires or
   // the Arduino will reset!
-  int countdownMS = Watchdog.enable(4000);
+  int countdownMS = Watchdog.enable(8000);
     
   Serial.print("Enabled the watchdog with max countdown of ");
   Serial.print(countdownMS, DEC);
@@ -217,45 +238,47 @@ void setup()
     digitalWrite(relay_5, HIGH);
     pinMode(relay_6, OUTPUT);
     digitalWrite(relay_6, HIGH);
-
     
-   Serial.begin(9600);  
-
-    
+    Serial.begin(9600);
+      
     Serial.println("Starting Modbus Client Moisture Sensor");
     // start the Modbus client, DEFAULT the moisture sensor runs at 19200 with a 500ms innterval
    if (!ModbusRTUClient.begin(19200)) 
    {
-    
-   //   lcd.print("Error, the modbus client did not start"); 
-      Serial.println("Error, the modbus client did not start");
-
-      while (1);
+       Serial.println("Error, the modbus client did not start");
+       while (1);
    } 
      Watchdog.reset();
-   while (status != WL_CONNECTED)
-      {
-       
-        wifiClient.stop();
-   //     lcd.clear(); 
-  //  lcd.print("Attempting to connect to WPA SSID: "); 
-        Serial.print("Attempting to connect to WPA SSID: ");
-  //      lcd.print("Attempting to connect to WPA SSID: "); 
-        Serial.println(ssid);
-  ///      lcd.setCursor(0, 1); 
- //    lcd.print(ssid); 
-       
+ int m = 0;    
+ while(status != WL_CONNECTED)
+     {   m++;
+         wifiClient.stop();
+         if(m>5){
+          wifiUp=false;
+          lcd.setBacklight(0xFF8C00);
+          break;
+          
+          }
+         wifiUp=true;
+         Serial.print("Attempting to connect to WPA SSID: ");
+         Serial.println(ssid);
         // unsuccessful, retry in 10 seconds
         status = WiFi.begin(ssid, pass);
         delay(3000);
         Watchdog.reset();
       }
-     Watchdog.reset();
-     lcd.clear(); 
-     lcd.print("You're connected to the network"); 
-      Serial.print("You're connected to the network");
+       
+     if(wifiUp)
+         {
+         Serial.print("wifiUp is :");
+         Serial.println(wifiUp);
+         lcd.clear(); 
+         lcd.print("You're connected to the network"); 
+         Serial.print("You're connected to the network");
+     
+      Watchdog.reset();
       delay(5000);
-     Watchdog.reset();
+      Watchdog.reset();
       // start time server
       timeClient.begin();
       // set offset for not daylight savings
@@ -268,240 +291,245 @@ void setup()
       wifiFirmware = WiFi.firmwareVersion();
       Serial.println();
       currentMillis = millis();
-   Watchdog.reset();
+      Watchdog.reset();
       
   // Setup the MDNS responder to listen to the configured name.
   // NOTE: You _must_ call this _after_ connecting to the WiFi network and
   // being assigned an IP address.
-  if (!mdnsResponder.begin(mdnsName)) {
-    Serial.println("Failed to start MDNS responder!");
-    while(1);
-  }
+     if (!mdnsResponder.begin(mdnsName)) 
+     {
+       Serial.println("Failed to start MDNS responder!");
+       while(1);
+     }
 
-  Serial.print("Server listening at http://");
-  Serial.print(mdnsName);
-  Serial.println(".local/");
-   Watchdog.reset();
- if(loopsensor >16){loopsensor=11;}
-     lcd.clear(); 
-     lcd.print("Server at       " );
-     lcd.print(mdnsName);
-     lcd.print(".local/");
-     delay(5000);
-     Watchdog.reset();
+      Serial.print("Server listening at http://");
+      Serial.print(mdnsName);
+      Serial.println(".local/");
+      Watchdog.reset();
+   
+         lcd.clear(); 
+         lcd.print("Server at       " );
+         lcd.print(mdnsName);
+         lcd.print(".local/");
+         delay(5000);
+         Watchdog.reset();
+
+          }
+          //no WIFI
+          else{
+                  Serial.println("no WIFI detected");
+                  wifiFirmware = WiFi.firmwareVersion();
+                  Serial.println();
+                  currentMillis = millis();
+                  Watchdog.reset();
+              }
  
 }
-// Main Program Loop
+     // Main Program Loop
 void loop() 
 {   
-      Watchdog.reset();
-  if(!startUP)
+  //wifiUp
+if(wifiUp)
+ {
+    Watchdog.reset();
+    // runs once on start up
+    if(!startUP)
     {
-   Watchdog.reset();
-     lcd.clear(); 
-     lcd.print("The Ceres Helper" );
-     lcd.print("reading sensors");
-             readSensors();
-               Watchdog.reset();
-           sendStatusStream();
-           sendStream();
-           startUP=true;
-
-
-           
+      lcd.clear(); 
+      lcd.print("The Ceres Helper" );
+      lcd.print("reading sensors");
+      
+      readSensors();
+      Watchdog.reset();
+      sendStatusStream();
+      sendStream();
+      startUP=true;
      } 
-       Watchdog.reset(); 
-  if(loopsensor >16){loopsensor=11;}
+     Watchdog.reset(); 
+
+     if(loopsensor >16){loopsensor=11;}
      lcd.clear(); 
-     lcd.print("SoilMoisture " );
-
+     lcd.print("Moisture " );
      lcd.print(loopsensor);
-       lcd.print("  " );
+     lcd.print(":" );
      lcd.print(soilMoisture);
+     lcd.setCursor(0,1);
+     lcd.print("UpTime:" );
+     // Print the number of seconds since reset:
+     lcd.print(millis() / 1000);
 
+     //  sendLcd("this is the send to LCD void");
+     // Call the update() function on the MDNS responder every loop iteration to
+     // make sure it can detect and respond to name requests.
+     Watchdog.reset();
+     mdnsResponder.poll();
+     // get time
+     timeClient.update();
+     readDHT22();
+     // check whether the reading should trip the relay
+     checkMoisture(loopsensor);
+     Watchdog.reset();
+     loopsensor++;
+     // currently empty function, returns true   
+     checkTempStatus();
+     //records average ping to google over 4 pings
+     pingGoogle();
+     Watchdog.reset();
+     
+     // sends status every ten minutes
+     Serial.println("10 Minute Check");
+     tenMinuteCheck();
+     
+     // sends data every hour
+     Serial.println("60 Minute Check");
+     Watchdog.reset();
+     oneHourCheck();
 
+     pumpCheck();
+     
+     WiFiClient wifiClient = server.available();   // listen for incoming clients
 
-  // Print the number of seconds since reset:
-  lcd.print(millis() / 1000);
-//  sendLcd("this is the send to LCD void");
-  // Call the update() function on the MDNS responder every loop iteration to
-  // make sure it can detect and respond to name requests.
-  mdnsResponder.poll();
-// get time
-timeClient.update();
-  // runs once on start up
-
-
-readDHT22();
-   // check whether the reading should trip the relay
-checkMoisture(loopsensor);
-Watchdog.reset();
-loopsensor++;
-   // currently empty function, returns true   
-checkTempStatus();
-   //records average ping to google over 4 pings
-pingGoogle();
-Watchdog.reset();
-  // sends status every ten minutes
-  Serial.println("10 Minute Check");
-tenMinuteCheck();
-Watchdog.reset();
-  // sends data every hour
-  Serial.println("60 Minute Check");
-Watchdog.reset();
-oneHourCheck();
-
- WiFiClient wifiClient = server.available();   // listen for incoming clients
-
-  if (wifiClient) {                             // if you get a client,
-    Serial.println("new client");           // print a message out the serial port
-    String currentLine = "";  // make a String to hold incoming data from the client
+     if (wifiClient) 
+     {                             // if you get a client,
+        Serial.println("new client");           // print a message out the serial port
+        String currentLine = "";  // make a String to hold incoming data from the client
    
-    while (wifiClient.connected()){          // loop while the client's connected
-     if (wifiClient.available()) {             // if there's bytes to read from the wifiClient,
+        while (wifiClient.connected()){          // loop while the client's connected
+        if (wifiClient.available()) {             // if there's bytes to read from the wifiClient,
         char c = wifiClient.read();             // read a byte, then
         Serial.write(c);                    // print it out the serial monitor
-        if (c == '\n') {                    // if the byte is a newline character
-
+        if (c == '\n') // if the byte is a newline character
+        {                    
           // if the current line is blank, you got two newline characters in a row.
           // that's the end of the wifiClient HTTP request, so send a response:
-          if (currentLine.length() == 0) {
-            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-            // and a content-type so the wifiClient knows what's coming, then a blank line:
-            wifiClient.println("HTTP/1.1 200 OK");
-            wifiClient.println("Content-type:text/html");
-            wifiClient.println();
-            wifiClient.println("<html>");
-            wifiClient.println("<head>");
-            wifiClient.println("<style type=\"text/css\"> body {background-color: #d3e8c8; margin:50px; padding:20px; line-height: 400% } h2 {font-size: 52px;color: blue;text-align: center;}p {font-family: verdana;font-size:xx-large;}</style>");
-            wifiClient.println("<title>Manual Pump Override</title>");
-            wifiClient.println("</head>");
-            wifiClient.println("<body>");
-    
-            //  wifiClient.print (F(">"));
-            // the content of the HTTP response follows the header:
-             wifiClient.print("<h2>PUMP OVERRIDE</h2>");
-             wifiClient.print("<p style=\"color:Crimson\">");
-             // wifiClient.print(myVersion"<br>");
-             wifiClient.print("Sensor 11 moisture reading : ");
-             wifiClient.print(soilMoisture11);
-             wifiClient.print("<br>");
-             wifiClient.print("Click <a href=\"/1\">here</a> to turn PUMP 11 on<br>");
-              wifiClient.print("<hr>");
-              wifiClient.print("<p style=\"color:Maroon\">");
-              //wifiClient.println("<style type=\"text/css\"> body {background-color: #d3e8c8; margin:50px; padding:20px; line-height: 400% } h2 {font-size: 52px;color: blue;text-align: center;}p {font-family: verdana;font-size:xx-large;}</style>");
-             wifiClient.print("Sensor 12 moisture reading : ");
-             wifiClient.print(soilMoisture12);
-             wifiClient.print("<br>");
-             wifiClient.print("Click <a href=\"/2\">here</a> to turn PUMP 12 on<br>");
- 
-               wifiClient.print("<hr>");
-             wifiClient.print("<p style=\"color:DarkGoldenRod\">");
-             wifiClient.print("Sensor 13 moisture reading : ");
-             wifiClient.print(soilMoisture13);
-             wifiClient.print("<br>");
-             wifiClient.print("Click <a href=\"/3\">here</a> to turn PUMP 13 on<br>");
-             wifiClient.print("<hr>");
-             wifiClient.print("<p style=\"color:SlateGray\">");
-             wifiClient.print("Sensor 14 moisture reading : ");
-             wifiClient.print(soilMoisture14);
-             wifiClient.print("<br>");
-             wifiClient.print("Click <a href=\"/4\">here</a> to turn PUMP 14 on<br>");
-             wifiClient.print("<hr>");
-             wifiClient.print("<p style=\"color:Green\">");
-             wifiClient.print("Sensor 15 moisture reading : ");
-             wifiClient.print(soilMoisture15);
-             wifiClient.print("<br>");
-             wifiClient.print("Click <a href=\"/5\">here</a> to turn PUMP 15 on<br>");
-             wifiClient.print("<hr>");
-             wifiClient.print("<p style=\"color:FireBrick\">");
-             wifiClient.print("Sensor 16 moisture reading : ");
-             wifiClient.print(soilMoisture16);
-             wifiClient.print("<br>");
-             wifiClient.print("Click <a href=\"/6\">here</a> to turn PUMP 16 on<br>");
-              wifiClient.print("<hr>");
-              wifiClient.print("<h2>Temperatures</h2>");
-            wifiClient.print("<p style=\"color:Crimson\">");
-             wifiClient.print("Sensor 11 temperature: ");
-             wifiClient.print(soilTemp11F);
-             wifiClient.print("<br>");
-            wifiClient.print("<p style=\"color:Maroon\">");
-             wifiClient.print("Sensor 12 temperature: ");
-             wifiClient.print(soilTemp12F);
-             wifiClient.print("<br>");
-             wifiClient.print("<p style=\"color:DarkGoldenRod\">");
-             wifiClient.print("Sensor 13 temperature: ");
-             wifiClient.print(soilTemp13F);
-             wifiClient.print("<br>");
-             wifiClient.print("<p style=\"color:SlateGray\">");
-             wifiClient.print("Sensor 14 temperature: ");
-             wifiClient.print(soilTemp14F);
-             wifiClient.print("<br>");
-             wifiClient.print("<p style=\"color:Green\">");
-             wifiClient.print("Sensor 15 temperature: ");
-             wifiClient.print(soilTemp15F);
-             wifiClient.print("<br>");
-             wifiClient.print("<p style=\"color:FireBrick\">");
-             wifiClient.print("Sensor 16 temperature: ");
-             wifiClient.print(soilTemp16F);
-             wifiClient.print("<br>");
-              wifiClient.print("<hr>");
-             wifiClient.print("Software Version: ");
-              //wifiClient.print(F("<input type='value' name=LowSetText value="));
-           
+         if (currentLine.length() == 0) 
+         {
+           // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+           // and a content-type so the wifiClient knows what's coming, then a blank line:
+           wifiClient.println("HTTP/1.1 200 OK");
+           wifiClient.println("Content-type:text/html");
+           wifiClient.println();
+           wifiClient.println("<html>");
+           wifiClient.println("<head>");
+           wifiClient.println("<style type=\"text/css\"> body {background-color: #d3e8c8; margin:50px; padding:20px; line-height: 400% } h2 {font-size: 52px;color: blue;text-align: center;}p {font-family: verdana;font-size:xx-large;}</style>");
+           wifiClient.println("<title>Manual Pump Override</title>");
+           wifiClient.println("</head>");
+           wifiClient.println("<body>");
+          // the content of the HTTP response follows the header:
+           wifiClient.print("<h2>PUMP OVERRIDE</h2>");
+           wifiClient.print("<p style=\"color:Crimson\">");
+           wifiClient.print("Sensor 11 moisture reading : ");
+           wifiClient.print(soilMoisture11);
+           wifiClient.print("<br>");
+           wifiClient.print("Click <a href=\"/1\">here</a> to turn PUMP 11 on<br>");
+           wifiClient.print("<hr>");
+           wifiClient.print("<p style=\"color:Maroon\">");
+            //wifiClient.println("<style type=\"text/css\"> body {background-color: #d3e8c8; margin:50px; padding:20px; line-height: 400% } h2 {font-size: 52px;color: blue;text-align: center;}p {font-family: verdana;font-size:xx-large;}</style>");
+           wifiClient.print("Sensor 12 moisture reading : ");
+           wifiClient.print(soilMoisture12);
+           wifiClient.print("<br>");
+           wifiClient.print("Click <a href=\"/2\">here</a> to turn PUMP 12 on<br>");
+           wifiClient.print("<hr>");
+           wifiClient.print("<p style=\"color:DarkGoldenRod\">");
+           wifiClient.print("Sensor 13 moisture reading : ");
+           wifiClient.print(soilMoisture13);
+           wifiClient.print("<br>");
+           wifiClient.print("Click <a href=\"/3\">here</a> to turn PUMP 13 on<br>");
+           wifiClient.print("<hr>");
+           wifiClient.print("<p style=\"color:SlateGray\">");
+           wifiClient.print("Sensor 14 moisture reading : ");
+           wifiClient.print(soilMoisture14);
+           wifiClient.print("<br>");
+           wifiClient.print("Click <a href=\"/4\">here</a> to turn PUMP 14 on<br>");
+           wifiClient.print("<hr>");
+           wifiClient.print("<p style=\"color:Green\">");
+           wifiClient.print("Sensor 15 moisture reading : ");
+           wifiClient.print(soilMoisture15);
+           wifiClient.print("<br>");
+           wifiClient.print("Click <a href=\"/5\">here</a> to turn PUMP 15 on<br>");
+           wifiClient.print("<hr>");
+           wifiClient.print("<p style=\"color:FireBrick\">");
+           wifiClient.print("Sensor 16 moisture reading : ");
+           wifiClient.print(soilMoisture16);
+           wifiClient.print("<br>");
+           wifiClient.print("Click <a href=\"/6\">here</a> to turn PUMP 16 on<br>");
+           wifiClient.print("<hr>");
+           wifiClient.print("<h2>Temperatures</h2>");
+           wifiClient.print("<p style=\"color:Crimson\">");
+           wifiClient.print("Sensor 11 temperature: ");
+           wifiClient.print(soilTemp11F);
+           wifiClient.print("<br>");
+           wifiClient.print("<p style=\"color:Maroon\">");
+           wifiClient.print("Sensor 12 temperature: ");
+           wifiClient.print(soilTemp12F);
+           wifiClient.print("<br>");
+           wifiClient.print("<p style=\"color:DarkGoldenRod\">");
+           wifiClient.print("Sensor 13 temperature: ");
+           wifiClient.print(soilTemp13F);
+           wifiClient.print("<br>");
+           wifiClient.print("<p style=\"color:SlateGray\">");
+           wifiClient.print("Sensor 14 temperature: ");
+           wifiClient.print(soilTemp14F);
+           wifiClient.print("<br>");
+           wifiClient.print("<p style=\"color:Green\">");
+           wifiClient.print("Sensor 15 temperature: ");
+           wifiClient.print(soilTemp15F);
+           wifiClient.print("<br>");
+           wifiClient.print("<p style=\"color:FireBrick\">");
+           wifiClient.print("Sensor 16 temperature: ");
+           wifiClient.print(soilTemp16F);
+           wifiClient.print("<br>");
+           wifiClient.print("<hr>");
+           wifiClient.print("Software Version: ");
+            //wifiClient.print(F("<input type='value' name=LowSetText value="));
            wifiClient.print (softwareFirmware);
-           
-               wifiClient.println("</p>");
-            // The HTTP response ends with another blank line:
-            wifiClient.println();
-            // break out of the while loop:
-               break;
- 
+           wifiClient.println("</p>");
+           // The HTTP response ends with another blank line:
+           wifiClient.println();
+           // break out of the while loop:
+           break;
           }
-          else {      // if you got a newline, then clear currentLine:
+          else 
+          {      // if you got a newline, then clear currentLine:
             currentLine = "";
           }
         }
-        else if (c != '\r') {    // if you got anything else but a carriage return character,
-          currentLine += c;      // add it to the end of the currentLine
-        }
+        else if (c != '\r') 
+           {    // if you got anything else but a carriage return character,
+              currentLine += c;      // add it to the end of the currentLine
+           }
         // Check to see if the wifiClient request was "GET /H" or "GET /L":
            if (currentLine.endsWith("GET /1")) {
           digitalWrite(relay_1, LOW);               // GET /1 turns Pump 1 on
            Serial.println("Pin 1 Low");
-           delay(pumpOnTime);
-         digitalWrite(relay_1, HIGH);   
+           pumpTimer_11 = millis();
         }
         if (currentLine.endsWith("GET /2")) {
           digitalWrite(relay_2, LOW);                // GET /2 turns Pump 2 on
            Serial.println("relay_2  LOW");
-           delay(pumpOnTime);
-           digitalWrite(relay_2, HIGH);  
+              pumpTimer_12 = millis();
         }
          if (currentLine.endsWith("GET /3")) {
           digitalWrite(relay_3, LOW);        // GET /3 turns Pump 3 on
            Serial.println("relay_3 LOW");
-           delay(pumpOnTime);
-          digitalWrite(relay_3, HIGH);  
+              pumpTimer_13 = millis();
         }
         if (currentLine.endsWith("GET /4")) {
           digitalWrite(relay_4, LOW);                // GET /4 turns Pump 4 on
           Serial.println("relay_4 LOW");
-          delay(pumpOnTime);
-          digitalWrite(relay_4, HIGH);   
-           
+             pumpTimer_14 = millis();
         }
               if (currentLine.endsWith("GET /5")) {
           digitalWrite(relay_5, LOW);               // GET /5 turns Pump 5 on
           Serial.println("Pin 5 LOW");
-           delay(pumpOnTime);
-          digitalWrite(relay_5, HIGH);   
+             pumpTimer_15 = millis();
+   
         }
               if (currentLine.endsWith("GET /6")) {
           digitalWrite(relay_6, LOW);               // GET /6 turns Pump 6 on
           Serial.println("Pin 6 LOW");
-           delay(pumpOnTime);
-          digitalWrite(relay_6, HIGH);   
+             pumpTimer_16 = millis();
+
         }
       }
     }
@@ -511,18 +539,113 @@ oneHourCheck();
     Serial.println("wifiClient disonnected");
   }
 
- //end Void LOOP         
-}
-void sendLcd(String lcdPrint){
 
-       lcd.clear(); //Clear the display - this moves the cursor to home position as well
-     //    lcd.clear(); //Clear the display - this moves the cursor to home position as well
-       lcd.print("The Ceres Helper");
-       lcd.display();
+
+  }
+//****************************************************
+//****************************************************
+//   when there is NO WIFI
+//****************************************************
+//****************************************************
+  else
+  {
+// sets lcd to ORANGE no wifi
+   //orange
+
+    
+   Watchdog.reset();
+    // runs once on start up
+    if(!startUP)
+    {
   
+      lcd.clear(); 
+      lcd.print("The Ceres Helper" );
+      lcd.print("reading sensors");
+      
+      readSensors();
+      Watchdog.reset();
+      startUP=true;
+     } 
+     Watchdog.reset(); 
+     if(loopsensor >16){loopsensor=11;}
+ //    lcd.setBacklight(0xFF8C00);
+     lcd.clear(); 
+     lcd.print("Moisture " );
+     lcd.print(loopsensor);
+     lcd.print(":" );
+     lcd.print(soilMoisture);
+     lcd.setCursor(0,1);
+     lcd.print("UpTime:" );
+     // Print the number of seconds since reset:
+     lcd.print(millis() / 1000);
+     //  sendLcd("this is the send to LCD void");
+     // Call the update() function on the MDNS responder every loop iteration to
+     // make sure it can detect and respond to name requests.
+     Watchdog.reset();
+   //  mdnsResponder.poll();
+     // get time
+   //  timeClient.update();
+     readDHT22();
+     // check whether the reading should trip the relay
+     checkMoisture(loopsensor);
+     Watchdog.reset();
+     loopsensor++;
+     // currently empty function, returns true   
+     checkTempStatus();
+     //records average ping to google over 4 pings
+  //   pingGoogle();
+     Watchdog.reset();
+     
+     // sends status every ten minutes
+     Serial.println("10 Minute Check");
+     tenMinuteCheck();
+     
+     // sends data every hour
+     Serial.println("60 Minute Check");
+     Watchdog.reset();
+     oneHourCheck();
+
+     pumpCheck();
+      
+    
+    
+    
+    
   }
 
-
+ //end Void LOOP      
+}
+  void pumpCheck()
+  {
+      currentMillis = millis();
+      Serial.print("pumpCheck - this is currentMillis: ");
+      Serial.println(currentMillis); 
+      Serial.println(); 
+     if(currentMillis - pumpTimer_11>= pumpTimer)
+     {    //watered for 5 seconds
+              digitalWrite(relay_1, HIGH);        
+     }
+         if(currentMillis - pumpTimer_12>= pumpTimer)
+     {    //watered for 5 seconds
+              digitalWrite(relay_2, HIGH);        
+     }
+         if(currentMillis - pumpTimer_13>= pumpTimer)
+     {    //watered for 5 seconds
+              digitalWrite(relay_3, HIGH);        
+     }      
+          if(currentMillis - pumpTimer_14>= pumpTimer)
+     {    //watered for 5 seconds
+              digitalWrite(relay_4, HIGH);        
+     }
+         if(currentMillis - pumpTimer_15>= pumpTimer)
+     {    //watered for 5 seconds
+              digitalWrite(relay_5, HIGH);        
+     }
+         if(currentMillis - pumpTimer_16>= pumpTimer)
+     {    //watered for 5 seconds
+              digitalWrite(relay_6, HIGH);        
+     } 
+  }
   void readDHT22()
   {
        Watchdog.reset();
@@ -537,6 +660,7 @@ void sendLcd(String lcdPrint){
  }
    void readSensors()
    {
+//   *********************UNCOMMENNT THE FUNCTIONS YOU WOULD LIKE TO RUN ***********************************
 //read ID of sensor 1
     //  readHoldingRegisterValues();
     //  delay(500);
@@ -589,8 +713,6 @@ void sendLcd(String lcdPrint){
     
 void tenMinuteCheck()
 {
- 
-  
       Serial.print("tenMinuteCheck- this is currentMillis: ");
       Serial.println(currentMillis); 
       Serial.println(); 
@@ -688,7 +810,8 @@ void checkMoisture(int x)
                    if(soilMoisture11<moistureThreshold and soilMoisture11>0)
                    {
                       digitalWrite(relay_1, LOW);   
-                      Serial.println("less than 350 ");     
+                      Serial.println("less than 350 "); 
+                      pumpTimer_11 = millis();    
                    }
                    else 
                       {
@@ -705,7 +828,8 @@ void checkMoisture(int x)
                   if(soilMoisture12<moistureThreshold and soilMoisture12>0)
                   {
                      digitalWrite(relay_2, LOW);   
-                     Serial.println("less than 350 ");     
+                     Serial.println("less than 350 "); 
+                        pumpTimer_12 = millis();    
                   }
                   else 
                      {
@@ -721,7 +845,8 @@ void checkMoisture(int x)
                    if(soilMoisture13<moistureThreshold  and soilMoisture13>0)
                    {
                      digitalWrite(relay_3, LOW);   
-                     Serial.println("less than 350 ");     
+                     Serial.println("less than 350 ");    
+                        pumpTimer_13 = millis(); 
                    }
                    else 
                       {
@@ -738,7 +863,8 @@ void checkMoisture(int x)
                    if(soilMoisture14<moistureThreshold and soilMoisture14>0)
                    {
                      digitalWrite(relay_4, LOW);   
-                     Serial.println("less than 350 ");     
+                     Serial.println("less than 350 ");   
+                        pumpTimer_14 = millis();  
                    }
                    else 
                       {
@@ -754,7 +880,8 @@ void checkMoisture(int x)
                            if(soilMoisture15<moistureThreshold and soilMoisture15>0)
                    {
                      digitalWrite(relay_5, LOW);   
-                     Serial.println("less than 350 ");     
+                     Serial.println("less than 350 ");  
+                        pumpTimer_15 = millis();   
                    }
                    else 
                    {
@@ -770,7 +897,8 @@ void checkMoisture(int x)
                              if(soilMoisture16<moistureThreshold and soilMoisture16>0)
                    {
                      digitalWrite(relay_6, LOW);   
-                     Serial.println("less than 350 ");     
+                     Serial.println("less than 350 ");  
+                        pumpTimer_16 = millis();   
                    }
                    else 
                    {
@@ -1074,6 +1202,7 @@ void printWiFiData()
 //////////////////////
 void pingG()
 {
+      Watchdog.reset();
            //pinging
       Serial.print("Pinging ");
       Serial.print(hostName);
