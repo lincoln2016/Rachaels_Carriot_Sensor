@@ -6,6 +6,7 @@
 #define SECRET_SSID "replace with your wifi SSID"                  // wifi name goes here
 #define SECRET_PASS "replace with the password for the wifi"       // wifi password goes here
 
-//shrekware carriot api key
+//(formerly)Carriots.com (now https://www.altairsmartworks.com/login)
+// ADD your API KEY and Device ID below
 #define CARRIOTSAPIKEY  "Replace with your Carriots apikey"           // Replace with your Carriots apikey
 #define CARRIOTSDEVICE  "Replace with the id_developer of your device" // Replace with the id_developer of your device
