@@ -5,7 +5,8 @@
   Modbus RS485 Soil Moisture Sensor with temp
    - read all the holding and register values for ID 1,11-16
    - method to change ID 1 to a new ID
-   - Sends stream and status to carriots IOT interface
+   - Sends stream and status to (formerly)carriots IOT interface
+        NOW https://www.altairsmartcore.com
   Circuit:
    - MKR 1000 board
    - MKR 485 shield
@@ -18,8 +19,6 @@
         https://github.com/sparkfun/SparkFun_SerLCD_Arduino_Library
    - 6 position relay board - generic
 */
-// ArduinoModbus depends on the ArduinoRS485 library
-
 //******************************************************
 //******         VERSION 4.3b
 //      added 1-6 sensors to the break readings
@@ -53,7 +52,7 @@
 //    4.2  added checkPump function, removed delay while pump running
 //    4.3b  
 //        added boolean wifiUp - works with or without wifi
-//        added ORANGE LCD for no wifi
+//        added LCD changes to ORANGE when wifi connection fails
 //******************************************************
 String softwareFirmware = "4.3b";
 
@@ -71,7 +70,7 @@ String softwareFirmware = "4.3b";
 #include <DHT.h>
 #include <DHT_U.h>
 #include <ArduinoRS485.h> 
-#include <ArduinoModbus.h>
+#include <ArduinoModbus.h>// ArduinoModbus depends on the ArduinoRS485 library
 #include "arduino_secrets.h" 
 // Sparkpost library for the lcd display
 //https://github.com/sparkfun/SparkFun_SerLCD_Arduino_Library
