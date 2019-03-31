@@ -1,4 +1,4 @@
-# Ceres Helper  version 4.3 
+# Ceres Helper  version 4.4g 
 The Ceres helper is a micro controller automating the measurement of soil moisture and temperature for use in efficient watering of your soil based life.
 
 It uses an arduino MKR1000, a rs485 transmitter, 6 - rs485 moisture and temperature reading sensors, an I2C LCD display, A DHT22 air temp and humidity sensor to collect information, send it to (formerly)Carriots.com (now https://www.altairsmartcore.com) 
