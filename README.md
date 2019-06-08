@@ -7,3 +7,4 @@ In order to get the Ceres Helper online, you will need to ADD your Wifi SSID and
 To allow the device to send data streams every hour and status streams every 10 minutes to (formerly)Carriots.com (now https://www.altairsmartcore.com), you will need to set up an account, add a device ID(name), retrieve the API key for the device and ADD your API key and Device ID(name) in the "arduino_secrets.h" file, under the API Key settings
 
 
+The companion android app can be found at https://play.google.com/store/apps/details?id=com.shrekware.cereshelper
